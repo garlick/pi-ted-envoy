@@ -1,3 +1,25 @@
+/*****************************************************************************
+ *  Copyright (C) 2013 Jim Garlick
+ *  Written by Jim Garlick <garlick.jim@gmail.com>
+ *  All Rights Reserved.
+ *
+ *  This file is part of pi-ted-envoy.
+ *  For details, see <https://github.com/garlick/pi-ted-envoy>
+ *
+ *  This program is free software; you can redistribute it and/or modify it
+ *  under the terms of the GNU General Public License (as published by the
+ *  Free Software Foundation) version 2, dated June 1991.
+ *
+ *  This program is distributed in the hope that it will be useful, but
+ *  WITHOUT ANY WARRANTY; without even the IMPLIED WARRANTY OF MERCHANTABILITY
+ *  or FITNESS FOR A PARTICULAR PURPOSE. See the terms and conditions of the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software Foundation,
+ *  Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA or see
+ *  <http://www.gnu.org/licenses/>.
+ *****************************************************************************/
 /* led.c - interface Kozig ZT.SEG8B4A036A-V1.1 I2C LED module to raspberry pi */
 
 /* FIXME: can't change address from 0x27 */
