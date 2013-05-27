@@ -1,0 +1,1 @@
+* * * * * timeout -s9 30s /usr/local/bin/enphase-scrape.pl >//dev/null 2>&1
