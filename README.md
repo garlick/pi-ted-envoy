@@ -13,7 +13,7 @@ power line to a power line modem (PLM) inside the TED, does transmit
 negative values though.
 
 To get this little bit (literally, just a minus sign) of information displayed,
-the main board was extracted from the TED unit and mounted a project
+the main board was extracted from the TED unit and mounted in a project
 box beside a Raspberry Pi.  The 3V3 serial output from the TED PLM was
 wired directly to the Pi serial port (P-1 pins 6=TxD and 10=RxD).
 See [this page](http://gangliontwitch.com/ted/) for how to tap the TED PLM
@@ -26,6 +26,17 @@ Finally, why not display energy production too?
 I found another Enphase Envoy user had posted a
 [perl script](http://sandeen.net/wordpress/energy/solar-monitoring/)
 to scrape data from its local monitoring page, which I modified.
+If the net and produced power are known, the power consumption can
+be calculated.  The display on the OLED looks like this:
+```
+    gen: +0.269 kW
+    use: -1.255 kW
+
+    day: +8.830 kWH
+```
+This shows the instantaneous generated power as a postive number,
+the instantaneous consumed power as a negative number, and the
+energy production for the day.
 
 For fun, I used the [ZeroMQ](http://www.zeromq.org/) message library to
 tie the pieces together.  A daemon called _emond_ listens for messages
