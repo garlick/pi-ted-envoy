@@ -315,14 +315,13 @@ int main (int argc, char *argv[])
         }
     }
 
-    _server_init ();
-
     if (!fopt) {
-        if (daemon(0, 0) < 0) {
+        if (daemon(0, 1) < 0) {
             perror ("daemon");
             exit (1);
         }
     }
+    _server_init ();
     for (;;)
         _poll (dopt);
     _server_fini ();
