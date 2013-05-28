@@ -41,12 +41,8 @@
 #include <getopt.h>
 #include <unistd.h>
 
-#define WITH_ZTLED  0
-
 #include "oled.h"
-#if WITH_ZTLED
 #include "led.h"
-#endif
 #include "json.h"
 #include "util.h"
 #include "zmq.h"
@@ -58,16 +54,14 @@
 #define TED_PORT    "/dev/ttyAMA0"
 
 #define OLED_ADDR   0x28
-#define LED_ADDR    0x27
+#define LED_ADDR    0x30
 
 typedef struct {
     void *zctx;
     void *zs_ted;
     void *zs_envoy;
     int oled;
-#if WITH_ZTLED
     int led;
-#endif
     int envoy_current_power;
     int envoy_daily_energy;
     int envoy_weekly_energy;
@@ -179,20 +173,18 @@ static void _server_init (void)
     _zmq_bind (ctx->zs_ted, TED_URI);
 
     _ted_init ();
-#if WITH_ZTLED
     ctx->led = led_init (LED_ADDR);
-    led_printf (ctx->led, "----"); 
-#endif
+    led_sleep_set (ctx->led, 0);
+
     ctx->oled = oled_init (OLED_ADDR);
     oled_clear (ctx->oled);
 }
 
 static void _server_fini (void)
 {
-#if WITH_ZTLED
     led_fini (ctx->led);
-#endif
     oled_fini (ctx->oled);
+
     _ted_fini ();
 
     _zmq_close (ctx->zs_ted);
@@ -245,7 +237,8 @@ static void _update_display (void)
 {
     int current_usage = ctx->ted_watts + ctx->envoy_current_power;
     struct timeval now, t;
-    bool tstale = false, estale = false;
+    bool tstale = false;
+    bool estale = false;
 
     xgettimeofday (&now, NULL);
     timersub (&now, &ctx->ted_last, &t);
@@ -265,13 +258,19 @@ static void _update_display (void)
     oled_printf (ctx->oled, "use %+0.3f kW%s",
               -1.0*(float)current_usage / 1000.0, tstale ? "*" : " ");
 
+    oled_text_pos_set (ctx->oled, 0, 2);
+    oled_printf (ctx->oled, "net %+0.3f kW%s",
+              -1.0*(float)ctx->ted_watts / 1000.0, tstale ? "*" : " ");
 
     oled_text_pos_set (ctx->oled, 0, 4);
     oled_printf (ctx->oled, "day %+0.3f kWh%s",
               (float)ctx->envoy_daily_energy / 1000.0, estale ? "*" : " ");
-#if WITH_ZTLED
-    led_printf (ctx->led, "%+0.3f", -1.0*(float)ctx->ted_watts / 1000.0);
-#endif
+
+    /* LED 1: usage */
+    if (tstale)
+        led_printf (ctx->led, "----"); 
+    else
+        led_printf (ctx->led, "%0.3f", (float)current_usage / 1000.0);
 }
 
 static void _poll (int dopt)
