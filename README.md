@@ -45,8 +45,9 @@ a message, it updates the OLED display, which looks like this:
 
     day: +8.830 kWH
 ```
-The LED display just echos the _use_ number (without the minus sign),
-so it can be seen from a distance.
+The _day_ value reflects only energy production.  It is scraped directly
+from the Envoy.  The LED display just echos the _use_ number from the OLED
+(without the minus sign), so it can be seen from a distance.
 
 The following packages, available in the Raspbian wheezy distro,
 are prerequisites for this project:
@@ -59,3 +60,4 @@ are prerequisites for this project:
     libjson0-dev
     liblwp-protocol-https-perl
 ```
+
