@@ -36,7 +36,7 @@
 
 #include "led.h"
 
-#define OPTIONS "tai:x:d:s:b:"
+#define OPTIONS "tai:x:d:s:b:r"
 #define HAVE_GETOPT_LONG 1
 
 #if HAVE_GETOPT_LONG
@@ -48,7 +48,8 @@ static const struct option longopts[] = {
     {"hex",             required_argument,  0, 'x'},
     {"double",          required_argument,  0, 'd'},
     {"string",          required_argument,  0, 's'},
-    {"brightness",     required_argument,   0, 'b'},
+    {"brightness",      required_argument,  0, 'b'},
+    {"reset",           no_argument,        0, 'r'},
     {0, 0, 0, 0},
 };
 #else
@@ -66,6 +67,7 @@ static void usage (void)
 "   -d,--double N           display double\n"
 "   -s,--string str         display string\n"
 "   -b,--brightness N       set brightness (0-0xff)\n"
+"   -r,--reset              reset device\n"
     );
     exit (1);
 }
@@ -84,6 +86,7 @@ int main (int argc, char *argv[])
     char *sopt_arg;
     int bopt = 0;
     int bopt_arg;
+    int ropt = 0;
     int addr;
     int fd;
 
@@ -115,13 +118,16 @@ int main (int argc, char *argv[])
                 bopt = 1;
                 bopt_arg = strtoul (optarg, NULL, 0);
                 break;
+            case 'r':
+                ropt = 1;
+                break;
             default:
                 usage ();
         }
     }
     if (optind != argc - 1)
         usage ();
-    if (!topt && !aopt && !iopt && !xopt && !dopt && !sopt)
+    if (!topt && !aopt && !iopt && !xopt && !dopt && !sopt && !ropt)
         usage ();
     if (topt && aopt)
         usage ();
@@ -137,6 +143,9 @@ int main (int argc, char *argv[])
 
     fd = led_init (addr);
     led_sleep_set (fd, 0);
+
+    if (ropt)
+        led_reset (fd);
 
     if (bopt)
         led_brightness_set (fd, bopt_arg);

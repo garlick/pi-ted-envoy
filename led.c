@@ -55,6 +55,8 @@
 #define REG_BRIGHTNESS  0x0a
 #define REG_VERSION     0x1f
 
+#define RESET_OLED      0x06
+
 #define SLEEP_ON        0xa5
 #define SLEEP_OFF       0xa1
 
@@ -139,6 +141,13 @@ void
 led_addr_set (int fd, uint8_t newaddr)
 {
     uint8_t buf[] = { REG_ADDRESS, newaddr };
+    _write (fd, buf, sizeof (buf));
+}
+
+void
+led_reset (int fd)
+{
+    uint8_t buf[] = { REG_RESET, RESET_OLED };
     _write (fd, buf, sizeof (buf));
 }
 
