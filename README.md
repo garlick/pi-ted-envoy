@@ -22,8 +22,8 @@ See [this page](http://gangliontwitch.com/ted/) for how to tap the TED PLM
 and begin the warranty voiding process.
 
 A tiny 128x64 OLED display from Digole (ebay) was interfaced to the Pi's
-I2C port (P-1 pins 3=SDA and 5=SCL).  Later, a 4-digit I2C LED module
-was added which can be seen from a greater distance.
+I2C port (P-1 pins 3=SDA and 5=SCL).  Later, two 4-digit I2C LED modules
+were added which can be seen from a greater distance.
 
 To obtain energy production information, I modified a 
 [perl script](http://sandeen.net/wordpress/energy/solar-monitoring/)
@@ -46,8 +46,8 @@ a message, it updates the OLED display, which looks like this:
     day: +8.830 kWH
 ```
 The _day_ value reflects only energy production.  It is scraped directly
-from the Envoy.  The LED display just echos the _use_ number from the OLED
-(without the minus sign), so it can be seen from a distance.
+from the Envoy.  The LED displays just echos the _gen_ and _use_ numbers
+from the OLED (without the minus sign), so they can be seen from a distance.
 
 The following packages, available in the Raspbian wheezy distro,
 are prerequisites for this project:

@@ -54,14 +54,16 @@
 #define TED_PORT    "/dev/ttyAMA0"
 
 #define OLED_ADDR   0x28
-#define LED_ADDR    0x30
+#define LED_A_ADDR  0x30
+#define LED_B_ADDR  0x27
 
 typedef struct {
     void *zctx;
     void *zs_ted;
     void *zs_envoy;
     int oled;
-    int led;
+    int led_a;
+    int led_b;
     int envoy_current_power;
     int envoy_daily_energy;
     int envoy_weekly_energy;
@@ -173,8 +175,11 @@ static void _server_init (void)
     _zmq_bind (ctx->zs_ted, TED_URI);
 
     _ted_init ();
-    ctx->led = led_init (LED_ADDR);
-    led_sleep_set (ctx->led, 0);
+    ctx->led_a = led_init (LED_A_ADDR);
+    led_sleep_set (ctx->led_a, 0);
+
+    ctx->led_b = led_init (LED_B_ADDR);
+    led_sleep_set (ctx->led_b, 0);
 
     ctx->oled = oled_init (OLED_ADDR);
     oled_clear (ctx->oled);
@@ -182,7 +187,8 @@ static void _server_init (void)
 
 static void _server_fini (void)
 {
-    led_fini (ctx->led);
+    led_fini (ctx->led_b);
+    led_fini (ctx->led_a);
     oled_fini (ctx->oled);
 
     _ted_fini ();
@@ -266,11 +272,18 @@ static void _update_display (void)
     oled_printf (ctx->oled, "day %+0.3f kWh%s",
               (float)ctx->envoy_daily_energy / 1000.0, estale ? "*" : " ");
 
-    /* LED 1: usage */
-    if (tstale)
-        led_printf (ctx->led, "----"); 
+    /* LED A: gen */
+    if (estale)
+        led_printf (ctx->led_a, "----"); 
     else
-        led_printf (ctx->led, "%0.3f", (float)current_usage / 1000.0);
+        led_printf (ctx->led_a, "%0.3f",
+            (float)ctx->envoy_current_power / 1000.0);
+
+    /* LED B: use */
+    if (tstale)
+        led_printf (ctx->led_b, "----"); 
+    else
+        led_printf (ctx->led_b, "%0.3f", (float)current_usage / 1000.0);
 }
 
 static void _poll (int dopt)
