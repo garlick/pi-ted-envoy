@@ -25,7 +25,7 @@
 /* Get data from Envoy PV controller and TED 1001 (with serial hack),
  * display data on i2c OLED/LEDs.
  * Listen for JSON from envoy_scrape.pl run by cron job on zs_envoy 0MQ socket.
- * Listen for JSON from TED thread and shutdown thread on zs_ted 0MQ socket.
+ * Listen for JSON from TED thread and shutdown thread on zs_thd 0MQ socket.
  */
 
 #include <stdio.h>
@@ -49,7 +49,7 @@
 #include "ted.h"
 #include "gpio.h"
 
-#define TED_URI     "inproc://ted"
+#define THD_URI     "inproc://thread"
 #define ENVOY_URI   "ipc:///tmp/emond"
 
 #define TED_PORT    "/dev/ttyAMA0"
@@ -61,31 +61,41 @@
 #define GPIO_SHUTDOWN_PIN 27
 
 typedef struct {
-    void *zs_ted;
+    void *zs_thd;
     pthread_t t;
 } thdctx_t;
 
 typedef struct {
+    /* ZeroMQ context and sockets
+     */
     void *zctx;
-    void *zs_ted;
+    void *zs_thd;
     void *zs_envoy;
+    /* file descriptors for I2C devices
+     */
     int oled;
     int led_a;
     int led_b;
+    /* most recent data obtained from envoy
+     */
     int envoy_current_power;
     int envoy_daily_energy;
     int envoy_weekly_energy;
     int envoy_lifetime_energy;
     time_t envoy_last;
+    /* most recent data obtained from ted
+     */
     int ted_addr;
     int ted_count;
     int ted_watts;
     int ted_volts;
     time_t ted_last;
-    int ted_wattsec;
-    bool shutdown;
-    thdctx_t sctx;
-    thdctx_t tctx;
+    /* misc
+     */
+    int wattsec;                        /* energy used since midnight */
+    bool shutdown;                      /* shutdown message received */
+    thdctx_t sctx;                      /* shutdown thread state */
+    thdctx_t tctx;                      /* TED thread state */
 } server_t;
 
 const char *shutdown_msg = "{ \"shutdown\": true }";
@@ -117,7 +127,7 @@ static void usage (void)
 }
 
 /* Wait for momentary, active-low halt switch to be activated,
- * then send shutdown_msg on ted socket.
+ * then send shutdown_msg on thread socket.
  */
 static void *_shut_thread (void *arg)
 {
@@ -128,7 +138,7 @@ static void *_shut_thread (void *arg)
 
     _zmq_msg_init_size (&msg, strlen (shutdown_msg));
     memcpy (zmq_msg_data (&msg), shutdown_msg, strlen (shutdown_msg));
-    _zmq_send (tctx->zs_ted, &msg, 0);
+    _zmq_send (tctx->zs_thd, &msg, 0);
 
     return NULL;
 }
@@ -137,8 +147,8 @@ static void _shut_thread_init (server_t *ctx)
 {
     int err;
 
-    ctx->sctx.zs_ted = _zmq_socket (ctx->zctx, ZMQ_PUSH);
-    _zmq_connect (ctx->sctx.zs_ted, TED_URI);
+    ctx->sctx.zs_thd = _zmq_socket (ctx->zctx, ZMQ_PUSH);
+    _zmq_connect (ctx->sctx.zs_thd, THD_URI);
 
     err = pthread_create (&ctx->sctx.t, NULL, _shut_thread, &ctx->sctx);
     if (err) {
@@ -147,6 +157,9 @@ static void _shut_thread_init (server_t *ctx)
     }
 }
 
+/* Read TED samples from serial port and retransmit them on thread socket
+ * as JSON messages.
+ */
 static void *_ted_thread (void *arg)
 {
     thdctx_t *tctx = (thdctx_t *)arg;
@@ -174,7 +187,7 @@ static void *_ted_thread (void *arg)
         }
         _zmq_msg_init_size (&msg, strlen (buf));
         memcpy (zmq_msg_data (&msg), buf, strlen (buf));
-        _zmq_send (tctx->zs_ted, &msg, 0);
+        _zmq_send (tctx->zs_thd, &msg, 0);
     }
 
     ted_fini ();
@@ -185,8 +198,8 @@ static void _ted_thread_init (server_t *ctx)
 {
     int err;
 
-    ctx->tctx.zs_ted = _zmq_socket (ctx->zctx, ZMQ_PUSH);
-    _zmq_connect (ctx->tctx.zs_ted, TED_URI);
+    ctx->tctx.zs_thd = _zmq_socket (ctx->zctx, ZMQ_PUSH);
+    _zmq_connect (ctx->tctx.zs_thd, THD_URI);
 
     err = pthread_create (&ctx->tctx.t, NULL, _ted_thread, &ctx->tctx);
     if (err) {
@@ -202,8 +215,8 @@ static server_t *_server_init (void)
     ctx->zctx = _zmq_init (1);
     ctx->zs_envoy = _zmq_socket (ctx->zctx, ZMQ_PULL);
     _zmq_bind (ctx->zs_envoy, ENVOY_URI);
-    ctx->zs_ted = _zmq_socket (ctx->zctx, ZMQ_PULL);
-    _zmq_bind (ctx->zs_ted, TED_URI);
+    ctx->zs_thd = _zmq_socket (ctx->zctx, ZMQ_PULL);
+    _zmq_bind (ctx->zs_thd, THD_URI);
 
     ctx->led_a = led_init (LED_A_ADDR);
     led_sleep_set (ctx->led_a, 0);
@@ -229,13 +242,16 @@ static void _server_fini (server_t *ctx)
     led_fini (ctx->led_a);
     oled_fini (ctx->oled);
 
-    _zmq_close (ctx->zs_ted);
+    _zmq_close (ctx->zs_thd);
     _zmq_close (ctx->zs_envoy);
     _zmq_term (ctx->zctx);
 
     free (ctx);
 }
 
+/* Message is ready on socket that Envoy perl script transmits on.
+ * Read it and update envoy sample data in the server context.
+ */
 static void _read_envoy (server_t *ctx, int dopt)
 {
     zmq_msg_t msg;
@@ -256,7 +272,11 @@ static void _read_envoy (server_t *ctx, int dopt)
     ctx->envoy_last = time (NULL);
 }
 
-static void _read_ted (server_t *ctx, int dopt)
+/* Message is ready on socket that threads transmit on.
+ * If TED, update TED sample data in the server context and recalc wattsec.
+ * If shutdown, set the shutdown flag.
+ */
+static void _read_thd (server_t *ctx, int dopt)
 {
     zmq_msg_t msg;
     char *s;
@@ -264,19 +284,17 @@ static void _read_ted (server_t *ctx, int dopt)
     struct tm tm_now, tm_last;
 
     _zmq_msg_init (&msg);
-    _zmq_recv(ctx->zs_ted, &msg, 0);
+    _zmq_recv(ctx->zs_thd, &msg, 0);
     s = xzmalloc (zmq_msg_size (&msg) + 1);
     memcpy (s, zmq_msg_data (&msg), zmq_msg_size (&msg));
     if (dopt)
-        fprintf (stderr, "_read_ted: %s\n", s);
-    if (!strcmp (s, shutdown_msg))
+        fprintf (stderr, "_read_thd: %s\n", s);
+    if (!strcmp (s, shutdown_msg)) {
         ctx->shutdown = true;
-    else
-        (void) ted_deserialize (s, &ctx->ted_addr, &ctx->ted_count,
-                                &ctx->ted_watts, &ctx->ted_volts);
-    free (s);
-    _zmq_msg_close (&msg);
-
+        goto done;
+    }
+    (void) ted_deserialize (s, &ctx->ted_addr,  &ctx->ted_count,
+                               &ctx->ted_watts, &ctx->ted_volts);
     /* N.B. although we notice if envoy or TED values are stale and
      * try to display this, the wattsec value could be innacurate if TED
      * readings are missed or Envoy scrape is not working for some time
@@ -285,12 +303,15 @@ static void _read_ted (server_t *ctx, int dopt)
     if (ctx->ted_last > 0 && ctx->envoy_last > 0) {
         localtime_r (&now, &tm_now);
         localtime_r (&ctx->ted_last, &tm_last);
-        if (tm_now.tm_hour == 0 && tm_last.tm_hour == 23) /* reset midnight */
-            ctx->ted_wattsec = 0;
-        ctx->ted_wattsec += (now - ctx->ted_last)
-                          * (ctx->ted_watts + ctx->envoy_current_power);
+        if (tm_now.tm_hour == 0 && tm_last.tm_hour == 23) /* reset @midnight */
+            ctx->wattsec = 0;
+        ctx->wattsec += (now - ctx->ted_last)
+                      * (ctx->ted_watts + ctx->envoy_current_power);
     }
     ctx->ted_last = now;
+done:
+    free (s);
+    _zmq_msg_close (&msg);
 }
 
 static void _shutdown_display (server_t *ctx)
@@ -318,7 +339,7 @@ static void _update_display (server_t *ctx)
 
     oled_text_pos_set (ctx->oled, 0, 2);
     oled_printf (ctx->oled, "use %-2.3f kWh%s",
-                 (float)ctx->ted_wattsec / (1000*60*60),
+                 (float)ctx->wattsec / (1000*60*60),
                  (tstale || estale) ? "*" : " ");
 
     oled_text_pos_set (ctx->oled, 0, 4);
@@ -344,7 +365,7 @@ static void _poll (server_t *ctx, int dopt)
 {
     zmq_pollitem_t zpa[] = {
 { .socket = ctx->zs_envoy,      .events = ZMQ_POLLIN, .revents = 0, .fd = -1 },
-{ .socket = ctx->zs_ted,        .events = ZMQ_POLLIN, .revents = 0, .fd = -1 },
+{ .socket = ctx->zs_thd,        .events = ZMQ_POLLIN, .revents = 0, .fd = -1 },
     };
     long tmout = 60*1000000; /* 60s */
     int rc;
@@ -357,7 +378,7 @@ static void _poll (server_t *ctx, int dopt)
         if (zpa[0].revents & ZMQ_POLLIN)
             _read_envoy (ctx, dopt);
         if (zpa[1].revents & ZMQ_POLLIN)
-            _read_ted (ctx, dopt);
+            _read_thd (ctx, dopt);
     }
     if (ctx->shutdown) {
         system ("/sbin/shutdown -h now");
