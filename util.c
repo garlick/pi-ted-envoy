@@ -26,7 +26,6 @@
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
-#include <sys/time.h>
 
 #include "util.h"
 
@@ -53,14 +52,6 @@ char *xstrdup (const char *s)
     if (!cpy)
         oom ();
     return cpy;
-}
-
-void xgettimeofday (struct timeval *tv, struct timezone *tz)
-{
-    if (gettimeofday (tv, tz) < 0) {
-        fprintf (stderr, "gettimeofday: %s\n", strerror (errno));
-        exit (1);
-    }
 }
 
 /*

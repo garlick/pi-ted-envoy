@@ -22,7 +22,8 @@ See [this page](http://gangliontwitch.com/ted/) for how to tap the TED PLM
 and begin the warranty voiding process.
 
 A tiny 128x64 OLED display from Digole (ebay) was interfaced to the Pi's
-I2C port (P-1 pins 3=SDA and 5=SCL), along with two 4-digit I2C LED modules.
+I2C port (P-1 pins 3=SDA and 5=SCL), along with two Kozig 4-digit I2C LED
+modules.
 
 To obtain energy production information, I modified a 
 [perl script](http://sandeen.net/wordpress/energy/solar-monitoring/)
@@ -36,24 +37,25 @@ on a TCP port from the Envoy-scraping perl script, run from cron once a
 minute; and for messages on shared memory from a thread watching the
 TED serial port.
 Both messages are encoded as JSON.  Each time the main program receives
-a message, it updates the OLED display, which looks like this:
+a message, it updates displays.  The OLED display looks like this:
 ```
-    gen: +0.269 kW
-    use: -1.255 kW
-    net: -0.986 kW
+    DAILY ENERGY
+    use 20.003 kWH
+    gen 8.830 kWH
 
-    day: +8.830 kWH
+    TED -1906W 123V
 ```
-The _day_ value reflects only energy production.  It is scraped directly
-from the Envoy.  The LED displays echo the _gen_ and _use_ numbers
-from the OLED (without sign or units), so they can be seen from a distance.
+The _use_ value reflects energy use since midnight and is accumulated
+based on instantaneous usage readings from the TED.
+The _gen_ value reflects energy production since midnight and is scraped
+directly from the Envoy.
+The LEDs display the instantaneous consumption and production in kW.
 
-To allow the unit to be shut down, a pushbutton was wired to GPIO27.
+To allow the unit to be safely unplugged, a pushbutton was wired to GPIO27.
 When _emond_ detects that this button has been activated, it executes
 ```
     /sbin/shutdown -h now
 ```
-so that the unit can be safely unplugged.
 
 The following packages, available in the Raspbian wheezy distro,
 are prerequisites for this project:

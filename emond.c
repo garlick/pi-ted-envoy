@@ -23,9 +23,9 @@
 /* emond.c - energy monitor daemon */
 
 /* Get data from Envoy PV controller and TED 1001 (with serial hack),
- * display data on i2c OLED.
+ * display data on i2c OLED/LEDs.
  * Listen for JSON from envoy_scrape.pl run by cron job on zs_envoy 0MQ socket.
- * listen for JSON from TED thread on zs_ted 0MQ socket.
+ * Listen for JSON from TED thread and shutdown thread on zs_ted 0MQ socket.
  */
 
 #include <stdio.h>
@@ -71,12 +71,13 @@ typedef struct {
     int envoy_daily_energy;
     int envoy_weekly_energy;
     int envoy_lifetime_energy;
-    struct timeval envoy_last;
+    time_t envoy_last;
     int ted_addr;
     int ted_count;
     int ted_watts;
     int ted_volts;
-    struct timeval ted_last;
+    time_t ted_last;
+    int ted_wattsec;
     int shutdown;
 } server_t;
 
@@ -87,8 +88,8 @@ typedef struct {
 
 const char *shutdown_msg = "{ \"shutdown\": true }";
 
-const struct timeval ted_stale = { .tv_sec = 30, .tv_usec = 0 };
-const struct timeval envoy_stale = { .tv_sec = 600, .tv_usec = 0 };
+const int ted_stale = 30;
+const int envoy_stale = 600;
 static server_t *ctx;
 static tedctx_t *tctx, *sctx;
 
@@ -116,6 +117,9 @@ static void usage (void)
     exit (1);
 }
 
+/* Wait for momentary, active-low halt switch to be activated,
+ * then send shutdown_msg on ted socket.
+ */
 static void *_shut_thread (void *arg)
 {
     zmq_msg_t msg;
@@ -156,7 +160,7 @@ static void *_ted_thread (void *arg)
     int addr, count, volts, watts;
 
     if (ted_init ("/dev/ttyAMA0") < 0) {
-        fprintf (stderr, "_ted_thread: /dev/ttyAMA0: %s", strerror (errno));
+        fprintf (stderr, "_ted_thread: /dev/ttyAMA0: %s\n", strerror (errno));
         exit (1);
     }
 
@@ -260,13 +264,15 @@ static void _read_envoy (int dopt)
                                  &ctx->envoy_current_power);
     free (s);
     _zmq_msg_close (&msg);
-    xgettimeofday (&ctx->envoy_last, NULL);
+    ctx->envoy_last = time (NULL);
 }
 
 static void _read_ted (int dopt)
 {
     zmq_msg_t msg;
     char *s;
+    time_t now = time (NULL);
+    struct tm tm_now, tm_last;
 
     _zmq_msg_init (&msg);
     _zmq_recv(ctx->zs_ted, &msg, 0);
@@ -281,7 +287,21 @@ static void _read_ted (int dopt)
                                 &ctx->ted_watts, &ctx->ted_volts);
     free (s);
     _zmq_msg_close (&msg);
-    xgettimeofday (&ctx->ted_last, NULL);
+
+    /* N.B. although we notice if envoy or TED values are stale and
+     * try to display this, the wattsec value could be innacurate if TED
+     * readings are missed or Envoy scrape is not working for some time
+     * during the day.
+     */
+    if (ctx->ted_last > 0 && ctx->envoy_last > 0) {
+        localtime_r (&now, &tm_now);
+        localtime_r (&ctx->ted_last, &tm_last);
+        if (tm_now.tm_hour == 0 && tm_last.tm_hour == 23) /* reset midnight */
+            ctx->ted_wattsec = 0;
+        ctx->ted_wattsec += (now - ctx->ted_last)
+                          * (ctx->ted_watts + ctx->envoy_current_power);
+    }
+    ctx->ted_last = now;
 }
 
 static void _shutdown_display (void)
@@ -294,36 +314,27 @@ static void _shutdown_display (void)
 
 static void _update_display (void)
 {
-    int current_usage = ctx->ted_watts + ctx->envoy_current_power;
-    struct timeval now, t;
-    bool tstale = false;
-    bool estale = false;
-
-    xgettimeofday (&now, NULL);
-    timersub (&now, &ctx->ted_last, &t);
-    if (timercmp (&t, &ted_stale, >))
-        tstale =true;
-    timersub (&now, &ctx->envoy_last, &t);
-    if (timercmp (&t, &envoy_stale, >))
-        estale =true;
+    time_t now = time (NULL);
+    bool tstale = (now - ctx->ted_last > ted_stale);
+    bool estale = (now - ctx->envoy_last > envoy_stale);
 
     oled_clear (ctx->oled);
 
     oled_text_pos_set (ctx->oled, 0, 0);
-    oled_printf (ctx->oled, "gen %+0.3f kW%s",
-              (float)ctx->envoy_current_power / 1000.0, estale ? "*" : " ");
+    oled_printf (ctx->oled, "DAILY ENERGY");
 
     oled_text_pos_set (ctx->oled, 0, 1);
-    oled_printf (ctx->oled, "use %+0.3f kW%s",
-              -1.0*(float)current_usage / 1000.0, tstale ? "*" : " ");
+    oled_printf (ctx->oled, "gen %-2.3f kWh%s",
+                 (float)ctx->envoy_daily_energy / 1000.0, estale ? "*" : " ");
 
     oled_text_pos_set (ctx->oled, 0, 2);
-    oled_printf (ctx->oled, "net %+0.3f kW%s",
-              -1.0*(float)ctx->ted_watts / 1000.0, tstale ? "*" : " ");
+    oled_printf (ctx->oled, "use %-2.3f kWh%s",
+                 (float)ctx->ted_wattsec / (1000*60*60),
+                 (tstale || estale) ? "*" : " ");
 
     oled_text_pos_set (ctx->oled, 0, 4);
-    oled_printf (ctx->oled, "day %+0.3f kWh%s",
-              (float)ctx->envoy_daily_energy / 1000.0, estale ? "*" : " ");
+    oled_printf (ctx->oled, "TED %dW %dV%s", ctx->ted_watts, ctx->ted_volts,
+                 tstale ? "*" : " ");
 
     /* LED A: gen */
     if (estale)
@@ -333,10 +344,11 @@ static void _update_display (void)
             (float)ctx->envoy_current_power / 1000.0);
 
     /* LED B: use */
-    if (tstale)
+    if (tstale || estale)
         led_printf (ctx->led_b, "----"); 
     else
-        led_printf (ctx->led_b, "%0.3f", (float)current_usage / 1000.0);
+        led_printf (ctx->led_b, "%0.3f",
+            (float)(ctx->ted_watts + ctx->envoy_current_power) / 1000);
 }
 
 static void _poll (int dopt)
@@ -359,7 +371,6 @@ static void _poll (int dopt)
             _read_ted (dopt);
     }
     if (ctx->shutdown) {
-        
         system ("/sbin/shutdown -h now");
         _shutdown_display ();
         exit (0);
