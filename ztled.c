@@ -35,8 +35,11 @@
 #include <unistd.h>
 
 #include "led.h"
+#include "gpio.h"
 
-#define OPTIONS "tai:x:d:s:b:r"
+#define GPIO_RST_PIN    17
+
+#define OPTIONS "tai:x:d:s:b:rR"
 #define HAVE_GETOPT_LONG 1
 
 #if HAVE_GETOPT_LONG
@@ -50,6 +53,7 @@ static const struct option longopts[] = {
     {"string",          required_argument,  0, 's'},
     {"brightness",      required_argument,  0, 'b'},
     {"reset",           no_argument,        0, 'r'},
+    {"hard-reset",      no_argument,        0, 'R'},
     {0, 0, 0, 0},
 };
 #else
@@ -67,7 +71,8 @@ static void usage (void)
 "   -d,--double N           display double\n"
 "   -s,--string str         display string\n"
 "   -b,--brightness N       set brightness (0-0xff)\n"
-"   -r,--reset              reset device\n"
+"   -r,--reset              soft reset device\n"
+"   -R,--hard-reset         hard reset device\n"
     );
     exit (1);
 }
@@ -78,16 +83,17 @@ int main (int argc, char *argv[])
     int topt = 0;
     int aopt = 0;
     int iopt = 0;
-    int iopt_arg, xopt_arg;
+    int iopt_arg = 0, xopt_arg = 0;
     int xopt = 0;
     int dopt = 0;
-    double dopt_arg;
+    double dopt_arg = 0.0;
     int sopt = 0;
-    char *sopt_arg;
+    char *sopt_arg = NULL;
     int bopt = 0;
-    int bopt_arg;
+    int bopt_arg = 0;
     int ropt = 0;
-    int addr;
+    int Ropt = 0;
+    int addr = 0;
     int fd;
 
     while ((c = GETOPT (argc, argv, OPTIONS, longopts)) != -1) {
@@ -121,9 +127,16 @@ int main (int argc, char *argv[])
             case 'r':
                 ropt = 1;
                 break;
+            case 'R':
+                Ropt = 1;
+                break;
             default:
                 usage ();
         }
+    }
+    if (Ropt) {
+        gpio_pin_pulse (GPIO_RST_PIN, 50, 0);
+        exit (0);
     }
     if (optind != argc - 1)
         usage ();
@@ -139,7 +152,6 @@ int main (int argc, char *argv[])
         led_fini (fd);
         exit (0);
     }
-     
 
     fd = led_init (addr);
     led_sleep_set (fd, 0);

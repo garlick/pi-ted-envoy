@@ -47,6 +47,7 @@
 #include "util.h"
 #include "zmq.h"
 #include "ted.h"
+#include "gpio.h"
 
 #define TED_URI     "inproc://ted"
 #define ENVOY_URI   "ipc:///tmp/emond"
@@ -56,6 +57,8 @@
 #define OLED_ADDR   0x28
 #define LED_A_ADDR  0x30
 #define LED_B_ADDR  0x27
+
+#define GPIO_SHUTDOWN_PIN 27
 
 typedef struct {
     void *zctx;
@@ -74,6 +77,7 @@ typedef struct {
     int ted_watts;
     int ted_volts;
     struct timeval ted_last;
+    int shutdown;
 } server_t;
 
 typedef struct {
@@ -81,10 +85,12 @@ typedef struct {
     pthread_t t;
 } tedctx_t;
 
+const char *shutdown_msg = "{ \"shutdown\": true }";
+
 const struct timeval ted_stale = { .tv_sec = 30, .tv_usec = 0 };
 const struct timeval envoy_stale = { .tv_sec = 600, .tv_usec = 0 };
 static server_t *ctx;
-static tedctx_t *tctx;
+static tedctx_t *tctx, *sctx;
 
 #define OPTIONS "fd"
 #define HAVE_GETOPT_LONG 1
@@ -108,6 +114,39 @@ static void usage (void)
 "   -d,--debug         show messages on stderr\n"
     );
     exit (1);
+}
+
+static void *_shut_thread (void *arg)
+{
+    zmq_msg_t msg;
+
+    gpio_keypress (GPIO_SHUTDOWN_PIN, 0);
+
+    _zmq_msg_init_size (&msg, strlen (shutdown_msg));
+    memcpy (zmq_msg_data (&msg), shutdown_msg, strlen (shutdown_msg));
+    _zmq_send (sctx->zs_ted, &msg, 0);
+
+    return NULL;
+}
+
+static void _shut_init (void)
+{
+    int err;
+
+    sctx = xzmalloc (sizeof (*tctx));
+    sctx->zs_ted = _zmq_socket (ctx->zctx, ZMQ_PUSH);
+    _zmq_connect (sctx->zs_ted, TED_URI);
+
+    err = pthread_create (&tctx->t, NULL, _shut_thread, NULL);
+    if (err) {
+        fprintf (stderr, "pthread_create: %s\n", strerror (err));
+        exit (1);
+    }
+}
+
+static void _shut_fini (void)
+{
+    /* FIXME */
 }
 
 static void *_ted_thread (void *arg)
@@ -175,6 +214,8 @@ static void _server_init (void)
     _zmq_bind (ctx->zs_ted, TED_URI);
 
     _ted_init ();
+    _shut_init ();
+
     ctx->led_a = led_init (LED_A_ADDR);
     led_sleep_set (ctx->led_a, 0);
 
@@ -192,6 +233,7 @@ static void _server_fini (void)
     oled_fini (ctx->oled);
 
     _ted_fini ();
+    _shut_fini ();
 
     _zmq_close (ctx->zs_ted);
     _zmq_close (ctx->zs_envoy);
@@ -232,11 +274,22 @@ static void _read_ted (int dopt)
     memcpy (s, zmq_msg_data (&msg), zmq_msg_size (&msg));
     if (dopt)
         fprintf (stderr, "_read_ted: %s\n", s);
-    (void) ted_deserialize (s, &ctx->ted_addr, &ctx->ted_count,
-                            &ctx->ted_watts, &ctx->ted_volts);
+    if (!strcmp (s, shutdown_msg))
+        ctx->shutdown = 1;
+    else
+        (void) ted_deserialize (s, &ctx->ted_addr, &ctx->ted_count,
+                                &ctx->ted_watts, &ctx->ted_volts);
     free (s);
     _zmq_msg_close (&msg);
     xgettimeofday (&ctx->ted_last, NULL);
+}
+
+static void _shutdown_display (void)
+{
+        led_printf (ctx->led_a, "----"); 
+        led_printf (ctx->led_b, "----"); 
+        oled_clear (ctx->oled);
+        oled_printf (ctx->oled, "SHUTDOWN");
 }
 
 static void _update_display (void)
@@ -304,6 +357,12 @@ static void _poll (int dopt)
             _read_envoy (dopt);
         if (zpa[1].revents & ZMQ_POLLIN)
             _read_ted (dopt);
+    }
+    if (ctx->shutdown) {
+        
+        system ("/sbin/shutdown -h now");
+        _shutdown_display ();
+        exit (0);
     }
     _update_display ();
 }
