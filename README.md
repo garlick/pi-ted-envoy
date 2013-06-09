@@ -45,10 +45,12 @@ a message, it updates displays.  The OLED display looks like this:
 
     TED -1906W 123V
 ```
-The _use_ value reflects energy use since midnight and is accumulated
-based on instantaneous usage readings from the TED.
+The _use_ value is energy use since midnight, accumulated in memory
+based on TED and Envoy values sampled during the day.
 The _gen_ value reflects energy production since midnight and is scraped
 directly from the Envoy.
+The TED line shows the most recent raw TED sample.
+
 The LEDs display the instantaneous consumption and production in kW.
 
 To allow the unit to be safely unplugged, a pushbutton was wired to GPIO27.
