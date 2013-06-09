@@ -61,6 +61,11 @@
 #define GPIO_SHUTDOWN_PIN 27
 
 typedef struct {
+    void *zs_ted;
+    pthread_t t;
+} thdctx_t;
+
+typedef struct {
     void *zctx;
     void *zs_ted;
     void *zs_envoy;
@@ -78,20 +83,14 @@ typedef struct {
     int ted_volts;
     time_t ted_last;
     int ted_wattsec;
-    int shutdown;
+    bool shutdown;
+    thdctx_t sctx;
+    thdctx_t tctx;
 } server_t;
 
-typedef struct {
-    void *zs_ted;
-    pthread_t t;
-} tedctx_t;
-
 const char *shutdown_msg = "{ \"shutdown\": true }";
-
-const int ted_stale = 30;
-const int envoy_stale = 600;
-static server_t *ctx;
-static tedctx_t *tctx, *sctx;
+const int ted_stale = 30;       /* sec */
+const int envoy_stale = 600;    /* sec */
 
 #define OPTIONS "fd"
 #define HAVE_GETOPT_LONG 1
@@ -122,39 +121,35 @@ static void usage (void)
  */
 static void *_shut_thread (void *arg)
 {
+    thdctx_t *tctx = (thdctx_t *)arg;
     zmq_msg_t msg;
 
     gpio_keypress (GPIO_SHUTDOWN_PIN, 0);
 
     _zmq_msg_init_size (&msg, strlen (shutdown_msg));
     memcpy (zmq_msg_data (&msg), shutdown_msg, strlen (shutdown_msg));
-    _zmq_send (sctx->zs_ted, &msg, 0);
+    _zmq_send (tctx->zs_ted, &msg, 0);
 
     return NULL;
 }
 
-static void _shut_init (void)
+static void _shut_thread_init (server_t *ctx)
 {
     int err;
 
-    sctx = xzmalloc (sizeof (*tctx));
-    sctx->zs_ted = _zmq_socket (ctx->zctx, ZMQ_PUSH);
-    _zmq_connect (sctx->zs_ted, TED_URI);
+    ctx->sctx.zs_ted = _zmq_socket (ctx->zctx, ZMQ_PUSH);
+    _zmq_connect (ctx->sctx.zs_ted, TED_URI);
 
-    err = pthread_create (&tctx->t, NULL, _shut_thread, NULL);
+    err = pthread_create (&ctx->sctx.t, NULL, _shut_thread, &ctx->sctx);
     if (err) {
         fprintf (stderr, "pthread_create: %s\n", strerror (err));
         exit (1);
     }
 }
 
-static void _shut_fini (void)
-{
-    /* FIXME */
-}
-
 static void *_ted_thread (void *arg)
 {
+    thdctx_t *tctx = (thdctx_t *)arg;
     char buf[256];
     zmq_msg_t msg;
     int addr, count, volts, watts;
@@ -186,39 +181,29 @@ static void *_ted_thread (void *arg)
     return NULL;
 }
 
-static void _ted_init (void)
+static void _ted_thread_init (server_t *ctx)
 {
     int err;
 
-    tctx = xzmalloc (sizeof (*tctx));
-    tctx->zs_ted = _zmq_socket (ctx->zctx, ZMQ_PUSH);
-    _zmq_connect (tctx->zs_ted, TED_URI);
+    ctx->tctx.zs_ted = _zmq_socket (ctx->zctx, ZMQ_PUSH);
+    _zmq_connect (ctx->tctx.zs_ted, TED_URI);
 
-    err = pthread_create (&tctx->t, NULL, _ted_thread, NULL);
+    err = pthread_create (&ctx->tctx.t, NULL, _ted_thread, &ctx->tctx);
     if (err) {
         fprintf (stderr, "pthread_create: %s\n", strerror (err));
         exit (1);
     }
 }
 
-static void _ted_fini (void)
+static server_t *_server_init (void)
 {
-    /* FIXME */
-}
-
-static void _server_init (void)
-{
-    ctx = xzmalloc (sizeof (*ctx));
+    server_t *ctx = xzmalloc (sizeof (*ctx));
 
     ctx->zctx = _zmq_init (1);
     ctx->zs_envoy = _zmq_socket (ctx->zctx, ZMQ_PULL);
     _zmq_bind (ctx->zs_envoy, ENVOY_URI);
-
     ctx->zs_ted = _zmq_socket (ctx->zctx, ZMQ_PULL);
     _zmq_bind (ctx->zs_ted, TED_URI);
-
-    _ted_init ();
-    _shut_init ();
 
     ctx->led_a = led_init (LED_A_ADDR);
     led_sleep_set (ctx->led_a, 0);
@@ -228,26 +213,30 @@ static void _server_init (void)
 
     ctx->oled = oled_init (OLED_ADDR);
     oled_clear (ctx->oled);
+
+    _ted_thread_init (ctx);
+    _shut_thread_init (ctx);
+
+    return ctx;
 }
 
-static void _server_fini (void)
+static void _server_fini (server_t *ctx)
 {
+    //_ted_thread_fini ();
+    //_shut_thread_fini ();
+
     led_fini (ctx->led_b);
     led_fini (ctx->led_a);
     oled_fini (ctx->oled);
 
-    _ted_fini ();
-    _shut_fini ();
-
     _zmq_close (ctx->zs_ted);
     _zmq_close (ctx->zs_envoy);
-
     _zmq_term (ctx->zctx);
 
     free (ctx);
 }
 
-static void _read_envoy (int dopt)
+static void _read_envoy (server_t *ctx, int dopt)
 {
     zmq_msg_t msg;
     char *s;
@@ -267,7 +256,7 @@ static void _read_envoy (int dopt)
     ctx->envoy_last = time (NULL);
 }
 
-static void _read_ted (int dopt)
+static void _read_ted (server_t *ctx, int dopt)
 {
     zmq_msg_t msg;
     char *s;
@@ -281,7 +270,7 @@ static void _read_ted (int dopt)
     if (dopt)
         fprintf (stderr, "_read_ted: %s\n", s);
     if (!strcmp (s, shutdown_msg))
-        ctx->shutdown = 1;
+        ctx->shutdown = true;
     else
         (void) ted_deserialize (s, &ctx->ted_addr, &ctx->ted_count,
                                 &ctx->ted_watts, &ctx->ted_volts);
@@ -304,7 +293,7 @@ static void _read_ted (int dopt)
     ctx->ted_last = now;
 }
 
-static void _shutdown_display (void)
+static void _shutdown_display (server_t *ctx)
 {
         led_printf (ctx->led_a, "----"); 
         led_printf (ctx->led_b, "----"); 
@@ -312,7 +301,7 @@ static void _shutdown_display (void)
         oled_printf (ctx->oled, "SHUTDOWN");
 }
 
-static void _update_display (void)
+static void _update_display (server_t *ctx)
 {
     time_t now = time (NULL);
     bool tstale = (now - ctx->ted_last > ted_stale);
@@ -351,7 +340,7 @@ static void _update_display (void)
             (float)(ctx->ted_watts + ctx->envoy_current_power) / 1000);
 }
 
-static void _poll (int dopt)
+static void _poll (server_t *ctx, int dopt)
 {
     zmq_pollitem_t zpa[] = {
 { .socket = ctx->zs_envoy,      .events = ZMQ_POLLIN, .revents = 0, .fd = -1 },
@@ -366,16 +355,16 @@ static void _poll (int dopt)
     }
     if (rc > 0) {
         if (zpa[0].revents & ZMQ_POLLIN)
-            _read_envoy (dopt);
+            _read_envoy (ctx, dopt);
         if (zpa[1].revents & ZMQ_POLLIN)
-            _read_ted (dopt);
+            _read_ted (ctx, dopt);
     }
     if (ctx->shutdown) {
         system ("/sbin/shutdown -h now");
-        _shutdown_display ();
-        exit (0);
+        _shutdown_display (ctx);
+        return;
     }
-    _update_display ();
+    _update_display (ctx);
 }
 
 int main (int argc, char *argv[])
@@ -383,6 +372,7 @@ int main (int argc, char *argv[])
     int c;
     int fopt = 0;
     int dopt = 0;
+    server_t *ctx;
 
     while ((c = GETOPT (argc, argv, OPTIONS, longopts)) != -1) {
         switch (c) {
@@ -403,10 +393,10 @@ int main (int argc, char *argv[])
             exit (1);
         }
     }
-    _server_init ();
+    ctx = _server_init ();
     for (;;)
-        _poll (dopt);
-    _server_fini ();
+        _poll (ctx, dopt);
+    _server_fini (ctx);
     return 0;
 }
 
