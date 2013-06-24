@@ -220,9 +220,11 @@ static server_t *_server_init (void)
 
     ctx->led_a = led_init (LED_A_ADDR);
     led_sleep_set (ctx->led_a, 0);
+    led_brightness_set (ctx->led_a, 0x20);
 
     ctx->led_b = led_init (LED_B_ADDR);
     led_sleep_set (ctx->led_b, 0);
+    led_brightness_set (ctx->led_b, 0x20);
 
     ctx->oled = oled_init (OLED_ADDR);
     oled_clear (ctx->oled);

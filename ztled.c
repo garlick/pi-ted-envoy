@@ -140,7 +140,7 @@ int main (int argc, char *argv[])
     }
     if (optind != argc - 1)
         usage ();
-    if (!topt && !aopt && !iopt && !xopt && !dopt && !sopt && !ropt)
+    if (!topt && !aopt && !iopt && !xopt && !dopt && !sopt && !bopt && !ropt)
         usage ();
     if (topt && aopt)
         usage ();
