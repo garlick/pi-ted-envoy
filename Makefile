@@ -5,7 +5,7 @@ LDFLAGS=-ljson -lzmq
 
 OBJS = emond.o ted.o oled.o util.o zmq.o json.o led.o gpio.o
 
-all: emond ztled
+all: emond ztled w1util
 
 emond: $(OBJS)
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
@@ -13,8 +13,11 @@ emond: $(OBJS)
 ztled: ztled.o led.o gpio.o
 	$(CC) -o $@ ztled.o led.o gpio.o
 
+w1util: w1.o w1util.o
+	$(CC) -o $@ w1.o w1util.o
+
 clean:
-	rm -f *.o emond
+	rm -f *.o emond w1util ztled
 
 install:
 	sudo install -c emond $(BINDIR)
