@@ -190,7 +190,7 @@ static char *temp_serialize (double c, double fr, double fz)
     add_double (no, "freezer", fz);
     if (!(o = json_object_new_object ()))
         oom ();
-    json_object_object_add (o, "fridge temps", no);
+    json_object_object_add (o, "temp", no);
     s = xstrdup (json_object_to_json_string (o));
     json_object_put (o);
     return s;
@@ -204,7 +204,7 @@ static bool temp_deserialize (const char *s, double *cp, double *frp, double *fz
 
     if (!(o = json_tokener_parse (s)))
         goto done;
-    if (!(no = json_object_object_get (o, "fridge temps")))
+    if (!(no = json_object_object_get (o, "temp")))
         goto done;
     if (!get_double (no, "case", &c) || !get_double (no, "fridge", &fr)
                                      || !get_double (no, "freezer", &fz))
@@ -232,7 +232,7 @@ static char *ted_serialize (int a, int c, int w, int v)
     add_int (no, "volts", v);
     if (!(o = json_object_new_object ()))
         oom ();
-    json_object_object_add (o, "ted sample", no);
+    json_object_object_add (o, "ted", no);
     s = xstrdup (json_object_to_json_string (o));
     json_object_put (o);
     return s;
@@ -246,7 +246,7 @@ static bool ted_deserialize (const char *s, int *ap, int *cp, int *wp, int *vp)
 
     if (!(o = json_tokener_parse (s)))
         goto done;
-    if (!(no = json_object_object_get (o, "ted sample")))
+    if (!(no = json_object_object_get (o, "ted")))
         goto done;
     if (!get_int (no, "addr", &a) || !get_int (no, "count", &c)
         || !get_int (no, "watts", &w) || !get_int (no, "volts", &v))
@@ -272,7 +272,7 @@ static bool envoy_deserialize (const char *s, int *lp, int *wp, int *dp, int *cp
 
     if (!(o = json_tokener_parse (s)))
         goto done;
-    if (!(no = json_object_object_get (o, "envoy_sample")))
+    if (!(no = json_object_object_get (o, "envoy")))
         goto done;
     if (!get_int (no, "lifetime_energy", &l)
         || !get_int (no, "weekly_energy", &w)

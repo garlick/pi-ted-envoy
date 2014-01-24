@@ -86,7 +86,7 @@ my %envoy_data = (
 	lifetime_energy => int $lifetime_energy,
 );
 my %envoy_data_envelope = (
-	envoy_sample => \%envoy_data,
+	envoy => \%envoy_data,
 );
 my $json_obj = new JSON;
 my $json_text = $json_obj->encode(\%envoy_data_envelope);
