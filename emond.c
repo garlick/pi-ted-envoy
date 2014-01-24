@@ -141,6 +141,128 @@ static void usage (void)
     exit (1);
 }
 
+static void add_double (json_object *o, const char *name, double x)
+{
+    json_object *no;
+
+    if (!(no = json_object_new_double (x)))
+        oom ();
+    json_object_object_add (o, name, no);
+}
+
+static bool get_double (json_object *o, const char *name, double *xp)
+{
+    json_object *no = json_object_object_get (o, name);
+    if (no) {
+        *xp = json_object_get_double (no);
+        return true;
+    }
+    return false;
+}
+
+static void add_int (json_object *o, const char *name, int i)
+{
+    json_object *no;
+
+    if (!(no = json_object_new_int (i)))
+        oom ();
+    json_object_object_add (o, name, no);
+}
+
+static bool get_int (json_object *o, const char *name, int *ip)
+{
+    json_object *no = json_object_object_get (o, name);
+    if (no) {
+        *ip = json_object_get_int (no);
+        return true;
+    }
+    return false;
+}
+
+static char *temp_serialize (double c, double fr, double fz)
+{
+    json_object *o, *no;
+    char *s;
+
+    if (!(no = json_object_new_object ()))
+        oom ();
+    add_double (no, "case", c);
+    add_double (no, "fridge", fr);
+    add_double (no, "freezer", fz);
+    if (!(o = json_object_new_object ()))
+        oom ();
+    json_object_object_add (o, "fridge temps", no);
+    s = xstrdup (json_object_to_json_string (o));
+    json_object_put (o);
+    return s;
+}
+
+static bool temp_deserialize (const char *s, double *cp, double *frp, double *fzp)
+{
+    json_object *no, *o;
+    double c, fr, fz;
+    bool ret = false;
+
+    if (!(o = json_tokener_parse (s)))
+        goto done;
+    if (!(no = json_object_object_get (o, "fridge temps")))
+        goto done;
+    if (!get_double (no, "case", &c) || !get_double (no, "fridge", &fr)
+                                     || !get_double (no, "freezer", &fz))
+        goto done;
+    ret = true;
+    *cp = c;
+    *frp = fr;
+    *fzp = fz;
+done:
+    if (o)
+        json_object_put (o);
+    return ret;
+}
+
+static char *ted_serialize (int a, int c, int w, int v)
+{
+    json_object *o, *no;
+    char *s = NULL;
+
+    if (!(no = json_object_new_object ()))
+        oom ();
+    add_int (no, "addr", a);
+    add_int (no, "count", c);
+    add_int (no, "watts", w);
+    add_int (no, "volts", v);
+    if (!(o = json_object_new_object ()))
+        oom ();
+    json_object_object_add (o, "ted sample", no);
+    s = xstrdup (json_object_to_json_string (o));
+    json_object_put (o);
+    return s;
+}
+
+static bool ted_deserialize (const char *s, int *ap, int *cp, int *wp, int *vp)
+{
+    json_object *no, *o;
+    int a, c, w, v;
+    bool ret = false;
+
+    if (!(o = json_tokener_parse (s)))
+        goto done;
+    if (!(no = json_object_object_get (o, "ted sample")))
+        goto done;
+    if (!get_int (no, "addr", &a) || !get_int (no, "count", &c)
+        || !get_int (no, "watts", &w) || !get_int (no, "volts", &v))
+        goto done;
+    ret = true;
+    *ap = a;
+    *cp = c;
+    *wp = w;
+    *vp = v;
+done:
+    if (o)
+        json_object_put (o);
+    return ret;
+}
+
 /* Wait for momentary, active-low halt switch to be activated,
  * then send shutdown_msg on thread socket.
  */
@@ -178,9 +300,9 @@ static void _shut_thread_init (server_t *ctx)
 static void *_ted_thread (void *arg)
 {
     thdctx_t *tctx = (thdctx_t *)arg;
-    char buf[256];
     zmq_msg_t msg;
     int addr, count, volts, watts;
+    char *s;
 
     if (ted_init ("/dev/ttyAMA0") < 0) {
         fprintf (stderr, "_ted_thread: /dev/ttyAMA0: %s\n", strerror (errno));
@@ -196,13 +318,11 @@ static void *_ted_thread (void *arg)
             //fprintf (stderr, "bad packet\n");
             continue;
         }
-        if (ted_serialize (buf, sizeof (buf), addr, count, volts, watts) < 0) {
-            //perror ("ted_serialize");
-            continue;
-        }
-        _zmq_msg_init_size (&msg, strlen (buf));
-        memcpy (zmq_msg_data (&msg), buf, strlen (buf));
+        s = ted_serialize (addr, count, volts, watts);
+        _zmq_msg_init_size (&msg, strlen (s));
+        memcpy (zmq_msg_data (&msg), s, strlen (s));
         _zmq_send (tctx->zs_thd, &msg, 0);
+        free (s);
     }
 
     ted_fini ();
@@ -223,74 +343,23 @@ static void _ted_thread_init (server_t *ctx)
     }
 }
 
-static void _json_object_add_double (json_object *o, const char *name, double x)
-{
-    json_object *no;
-
-    if (!(no = json_object_new_double (x))) {
-        fprintf (stderr, "out of memory\n");
-        exit (1);
-    }
-    json_object_object_add (o, name, no);
-}
-
-static bool _json_object_get_double (json_object *o, const char *name, double *xp)
-{
-    json_object *no = json_object_object_get (o, name);
-    if (no) {
-        *xp = json_object_get_double (no);
-        return true;
-    }
-    return false;
-}
-
-static bool temp_deserialize (char *s, double *casep, double *fridgep, double *freezerp)
-{
-    json_object *o = json_tokener_parse (s);
-    double tcase, fridge, freezer;
-    bool ret = false;
-
-    if (!o)
-        goto done;
-    if (!_json_object_get_double (o, "case", &tcase)
-            || !_json_object_get_double (o, "fridge", &fridge)
-            || !_json_object_get_double (o, "freezer", &freezer))
-        goto done;
-    ret = true;
-    *casep = tcase;
-    *fridgep = fridge;
-    *freezerp = freezer;
-done:
-    if (o)
-        json_object_put (o);
-    return ret;
-}
 
 static void *_w1_thread (void *arg)
 {
     thdctx_t *tctx = (thdctx_t *)arg;
     zmq_msg_t msg;
-    json_object *o;
-    const char *s;
+    char *s;
 
     while (1) {
-        if (!(o = json_object_new_object ())) {
-            fprintf (stderr, "out of memory\n");
-            exit (1);
-        }
-        _json_object_add_double (o, "case", w1_therm_get (W1_TEMP_INTERNAL));
-        _json_object_add_double (o, "fridge", w1_therm_get (W1_TEMP_FRIDGE));
-        _json_object_add_double (o, "freezer", w1_therm_get (W1_TEMP_FREEZER));
-        s = json_object_to_json_string (o);
-
+        s = temp_serialize (w1_therm_get (W1_TEMP_INTERNAL),
+                            w1_therm_get (W1_TEMP_FRIDGE),
+                            w1_therm_get (W1_TEMP_FREEZER));
         _zmq_msg_init_size (&msg, strlen (s));
         memcpy (zmq_msg_data (&msg), s, strlen (s));
         _zmq_send (tctx->zs_thd, &msg, 0);
-
-        json_object_put (o); 
+        free (s);
         sleep (10);
     }
-
     return NULL;
 }
 
@@ -307,7 +376,6 @@ static void _w1_thread_init (server_t *ctx)
         exit (1);
     }
 }
-
 
 static server_t *_server_init (void)
 {
@@ -399,29 +467,29 @@ static void _read_thd (server_t *ctx, int dopt)
         goto done;
     }
     if (temp_deserialize (s, &ctx->temp_case, &ctx->temp_fridge,
-                          &ctx->temp_freezer)) {
+                             &ctx->temp_freezer)) {
         printf ("case=%lf(%lf) fridge=%lf(%lf) freezer=%lf(%lf)\n",
                 ctx->temp_case, c2f (ctx->temp_case),
                 ctx->temp_fridge, c2f (ctx->temp_fridge),
                 ctx->temp_freezer, c2f (ctx->temp_freezer));
-        goto done;
     }
-    (void) ted_deserialize (s, &ctx->ted_addr,  &ctx->ted_count,
-                               &ctx->ted_watts, &ctx->ted_volts);
-    /* N.B. although we notice if envoy or TED values are stale and
-     * try to display this, the wattsec value could be innacurate if TED
-     * readings are missed or Envoy scrape is not working for some time
-     * during the day.
-     */
-    if (ctx->ted_last > 0 && ctx->envoy_last > 0) {
-        localtime_r (&now, &tm_now);
-        localtime_r (&ctx->ted_last, &tm_last);
-        if (tm_now.tm_hour == 0 && tm_last.tm_hour == 23) /* reset @midnight */
-            ctx->wattsec = 0;
-        ctx->wattsec += (now - ctx->ted_last)
-                      * (ctx->ted_watts + ctx->envoy_current_power);
+    else if (ted_deserialize (s, &ctx->ted_addr,  &ctx->ted_count,
+                                 &ctx->ted_watts, &ctx->ted_volts)) {
+        /* N.B. although we notice if envoy or TED values are stale and
+         * try to display this, the wattsec value could be innacurate if TED
+         * readings are missed or Envoy scrape is not working for some time
+         * during the day.
+         */
+        if (ctx->ted_last > 0 && ctx->envoy_last > 0) {
+            localtime_r (&now, &tm_now);
+            localtime_r (&ctx->ted_last, &tm_last);
+            if (tm_now.tm_hour == 0 && tm_last.tm_hour == 23) /* reset @midnight */
+                ctx->wattsec = 0;
+            ctx->wattsec += (now - ctx->ted_last)
+                          * (ctx->ted_watts + ctx->envoy_current_power);
+        }
+        ctx->ted_last = now;
     }
-    ctx->ted_last = now;
 done:
     free (s);
     _zmq_msg_close (&msg);
