@@ -22,8 +22,8 @@ See [this page](http://gangliontwitch.com/ted/) for how to tap the TED PLM
 and begin the warranty voiding process.
 
 A tiny 128x64 OLED display from Digole (ebay) was interfaced to the Pi's
-I2C port (P-1 pins 3=SDA and 5=SCL), along with two Kozig 4-digit I2C LED
-modules.
+I2C port (P-1 pins 3=SDA and 5=SCL), along with two Kozig (ebay)
+4-digit I2C LED modules.
 
 To obtain energy production information, I modified a 
 [perl script](http://sandeen.net/wordpress/energy/solar-monitoring/)
@@ -69,12 +69,12 @@ Addendum: fridge temps
 ======================
 
 Since the energy monitor sits on top of my fridge, it seemed natrual
-that it should grow some one-wire temperature sensors.
+that it should grow some 1-wire temperature sensors.
 
 To this end, I soldered a DS2484 1-wire I2C interface chip and one DS1820B
 temperature sensor to a Pi Plate, and mounted an RJ11 connector out the back
 of the energy monitor.  Potted DS1820B sensors (ebay) were mounted in the
-freezer and refridgerator compartments.  Pi GPIO4 was connected to the SLPZ
+freezer and refrigerator compartments.  Pi GPIO4 was connected to the SLPZ
 line on the DS2484.
 
 The following runes are needed in /etc/rc.local:
