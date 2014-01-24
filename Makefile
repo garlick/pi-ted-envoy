@@ -3,7 +3,7 @@ BINDIR=/usr/local/bin
 CFLAGS=-Wall -Werror -O -g
 LDFLAGS=-ljson -lzmq
 
-OBJS = emond.o ted.o oled.o util.o zmq.o json.o led.o gpio.o
+OBJS = emond.o ted.o oled.o util.o zmq.o json.o led.o gpio.o w1.o
 
 all: emond ztled w1util
 

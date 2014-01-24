@@ -40,6 +40,8 @@
 #include <stdint.h>
 #include <getopt.h>
 #include <unistd.h>
+#include <json/json.h>
+#include <math.h>
 
 #include "oled.h"
 #include "led.h"
@@ -48,6 +50,7 @@
 #include "zmq.h"
 #include "ted.h"
 #include "gpio.h"
+#include "w1.h"
 
 #define THD_URI     "inproc://thread"
 #define ENVOY_URI   "ipc:///tmp/emond"
@@ -57,8 +60,14 @@
 #define OLED_ADDR   0x28
 #define LED_A_ADDR  0x30
 #define LED_B_ADDR  0x27
+#define W1_TEMP_INTERNAL    "28-000002bf1574"
+#define W1_TEMP_FRIDGE      "28-0000059d3842"
+#define W1_TEMP_FREEZER     "28-0000059dec96"
 
 #define GPIO_SHUTDOWN_PIN 27
+
+typedef enum { MODE_POWER, MODE_TEMP } dispmode_t;
+static dispmode_t mode = MODE_TEMP;
 
 typedef struct {
     void *zs_thd;
@@ -90,12 +99,18 @@ typedef struct {
     int ted_watts;
     int ted_volts;
     time_t ted_last;
+    /* most recent temp data
+     */
+    double temp_case;
+    double temp_fridge;
+    double temp_freezer;
     /* misc
      */
     int wattsec;                        /* energy used since midnight */
     bool shutdown;                      /* shutdown message received */
     thdctx_t sctx;                      /* shutdown thread state */
     thdctx_t tctx;                      /* TED thread state */
+    thdctx_t w1ctx;                     /* w1 thread state */
 } server_t;
 
 const char *shutdown_msg = "{ \"shutdown\": true }";
@@ -208,6 +223,92 @@ static void _ted_thread_init (server_t *ctx)
     }
 }
 
+static void _json_object_add_double (json_object *o, const char *name, double x)
+{
+    json_object *no;
+
+    if (!(no = json_object_new_double (x))) {
+        fprintf (stderr, "out of memory\n");
+        exit (1);
+    }
+    json_object_object_add (o, name, no);
+}
+
+static bool _json_object_get_double (json_object *o, const char *name, double *xp)
+{
+    json_object *no = json_object_object_get (o, name);
+    if (no) {
+        *xp = json_object_get_double (no);
+        return true;
+    }
+    return false;
+}
+
+static bool temp_deserialize (char *s, double *casep, double *fridgep, double *freezerp)
+{
+    json_object *o = json_tokener_parse (s);
+    double tcase, fridge, freezer;
+    bool ret = false;
+
+    if (!o)
+        goto done;
+    if (!_json_object_get_double (o, "case", &tcase)
+            || !_json_object_get_double (o, "fridge", &fridge)
+            || !_json_object_get_double (o, "freezer", &freezer))
+        goto done;
+    ret = true;
+    *casep = tcase;
+    *fridgep = fridge;
+    *freezerp = freezer;
+done:
+    if (o)
+        json_object_put (o);
+    return ret;
+}
+
+static void *_w1_thread (void *arg)
+{
+    thdctx_t *tctx = (thdctx_t *)arg;
+    zmq_msg_t msg;
+    json_object *o;
+    const char *s;
+
+    while (1) {
+        if (!(o = json_object_new_object ())) {
+            fprintf (stderr, "out of memory\n");
+            exit (1);
+        }
+        _json_object_add_double (o, "case", w1_therm_get (W1_TEMP_INTERNAL));
+        _json_object_add_double (o, "fridge", w1_therm_get (W1_TEMP_FRIDGE));
+        _json_object_add_double (o, "freezer", w1_therm_get (W1_TEMP_FREEZER));
+        s = json_object_to_json_string (o);
+
+        _zmq_msg_init_size (&msg, strlen (s));
+        memcpy (zmq_msg_data (&msg), s, strlen (s));
+        _zmq_send (tctx->zs_thd, &msg, 0);
+
+        json_object_put (o); 
+        sleep (10);
+    }
+
+    return NULL;
+}
+
+static void _w1_thread_init (server_t *ctx)
+{
+    int err;
+
+    ctx->w1ctx.zs_thd = _zmq_socket (ctx->zctx, ZMQ_PUSH);
+    _zmq_connect (ctx->w1ctx.zs_thd, THD_URI);
+
+    err = pthread_create (&ctx->w1ctx.t, NULL, _w1_thread, &ctx->w1ctx);
+    if (err) {
+        fprintf (stderr, "pthread_create: %s\n", strerror (err));
+        exit (1);
+    }
+}
+
+
 static server_t *_server_init (void)
 {
     server_t *ctx = xzmalloc (sizeof (*ctx));
@@ -231,6 +332,7 @@ static server_t *_server_init (void)
 
     _ted_thread_init (ctx);
     _shut_thread_init (ctx);
+    _w1_thread_init (ctx);
 
     return ctx;
 }
@@ -277,6 +379,7 @@ static void _read_envoy (server_t *ctx, int dopt)
 /* Message is ready on socket that threads transmit on.
  * If TED, update TED sample data in the server context and recalc wattsec.
  * If shutdown, set the shutdown flag.
+ * If temp, update temp sample data in the server (XXX and...?)
  */
 static void _read_thd (server_t *ctx, int dopt)
 {
@@ -293,6 +396,14 @@ static void _read_thd (server_t *ctx, int dopt)
         fprintf (stderr, "_read_thd: %s\n", s);
     if (!strcmp (s, shutdown_msg)) {
         ctx->shutdown = true;
+        goto done;
+    }
+    if (temp_deserialize (s, &ctx->temp_case, &ctx->temp_fridge,
+                          &ctx->temp_freezer)) {
+        printf ("case=%lf(%lf) fridge=%lf(%lf) freezer=%lf(%lf)\n",
+                ctx->temp_case, c2f (ctx->temp_case),
+                ctx->temp_fridge, c2f (ctx->temp_fridge),
+                ctx->temp_freezer, c2f (ctx->temp_freezer));
         goto done;
     }
     (void) ted_deserialize (s, &ctx->ted_addr,  &ctx->ted_count,
@@ -348,19 +459,33 @@ static void _update_display (server_t *ctx)
     oled_printf (ctx->oled, "TED %dW %dV%s", ctx->ted_watts, ctx->ted_volts,
                  tstale ? "*" : " ");
 
-    /* LED A: gen */
-    if (estale)
-        led_printf (ctx->led_a, "----"); 
-    else
-        led_printf (ctx->led_a, "%0.3f",
-            (float)ctx->envoy_current_power / 1000.0);
+    if (mode == MODE_POWER) {
+        /* LED A: gen */
+        if (estale)
+            led_printf (ctx->led_a, "----"); 
+        else
+            led_printf (ctx->led_a, "%0.3f",
+                (float)ctx->envoy_current_power / 1000.0);
 
-    /* LED B: use */
-    if (tstale || estale)
-        led_printf (ctx->led_b, "----"); 
-    else
-        led_printf (ctx->led_b, "%0.3f",
+        /* LED B: use */
+        if (tstale || estale)
+            led_printf (ctx->led_b, "----"); 
+        else
+            led_printf (ctx->led_b, "%0.3f",
             (float)(ctx->ted_watts + ctx->envoy_current_power) / 1000);
+    } else if (mode == MODE_TEMP) {
+        /* LED A: fridge */
+        if (ctx->temp_fridge == NAN)
+            led_printf (ctx->led_a, "----"); 
+        else
+            led_printf (ctx->led_a, "%0.1lf", c2f (ctx->temp_fridge));
+
+        /* LED B: freezer */
+        if (ctx->temp_freezer == NAN)
+            led_printf (ctx->led_b, "----"); 
+        else
+            led_printf (ctx->led_b, "%0.1lf", c2f (ctx->temp_freezer));
+    }
 }
 
 static void _poll (server_t *ctx, int dopt)
