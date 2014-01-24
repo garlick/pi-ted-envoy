@@ -148,31 +148,3 @@ void ted_fini (void)
 {
 	fclose (ted);
 }
-
-#if 0
-int main (int argc, char *argv[])
-{
-	int addr, count, volts, watts;
-
-	if (ted_init ("/dev/ttyAMA0") < 0) {
-		perror ("/dev/ttyAMA0");
-		return 1;
-	}
-
-	for (;;) {
-		if (ted_read (&addr, &count, &volts, &watts) < 0) {
-			if (errno != EINVAL) {
-				perror ("ted_read");
-				break;
-			}
-			fprintf (stderr, "bad packet\n");
-		}
-		printf ("addr=%d count=%d volts=%d watts=%d\n",
-			addr, count, volts, watts);
-	}
-
-	ted_fini ();
-
-	return 0;
-}
-#endif
