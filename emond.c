@@ -1,5 +1,5 @@
 /*****************************************************************************
- *  Copyright (C) 2013 Jim Garlick
+ *  Copyright (C) 2013-14 Jim Garlick
  *  Written by Jim Garlick <garlick.jim@gmail.com>
  *  All Rights Reserved.
  *
@@ -51,19 +51,21 @@
 #include "gpio.h"
 #include "w1.h"
 
-#define OTHER_URI   "inproc://other"
-#define ENVOY_URI   "ipc:///tmp/emond"
+#define OTHER_URI       "inproc://other"
+#define ENVOY_URI       "ipc:///tmp/emond"
 
-#define TED_PORT    "/dev/ttyAMA0"
+#define SER_TED        "/dev/ttyAMA0"
 
-#define OLED_ADDR   0x28
-#define LED_A_ADDR  0x30
-#define LED_B_ADDR  0x27
-#define W1_TEMP_INTERNAL    "28-000002bf1574"
-#define W1_TEMP_FRIDGE      "28-0000059d3842"
-#define W1_TEMP_FREEZER     "28-0000059dec96"
+#define I2C_W1          0x18 /* not used here, for doc only */
+#define I2C_OLED        0x28
+#define I2C_LED_A       0x30
+#define I2C_LED_B       0x27
 
-#define GPIO_MODE_PIN 27
+#define W1_TEMP_CASE    "28-000002bf1574"
+#define W1_TEMP_FRIDGE  "28-0000059d3842"
+#define W1_TEMP_FREEZER "28-0000059dec96"
+
+#define GPIO_MODE_PIN   27
 
 typedef enum { MODE_POWER, MODE_TEMP } dispmode_t;
 
@@ -108,9 +110,7 @@ typedef struct {
     thdctx_t kctx;                      /* key thread state */
     thdctx_t pctx;                      /* TED thread state */
     thdctx_t Tctx;                      /* temp thread state */
-    /* Display mode
-     */
-    dispmode_t mode;
+    dispmode_t mode;                    /* display mode */
 } server_t;
 
 const int ted_stale = 30;       /* sec */
@@ -370,8 +370,8 @@ static void *_ted_thread (void *arg)
     int addr, count, volts, watts;
     char *s;
 
-    if (ted_init ("/dev/ttyAMA0") < 0) {
-        fprintf (stderr, "_ted_thread: /dev/ttyAMA0: %s\n", strerror (errno));
+    if (ted_init (SER_TED) < 0) {
+        fprintf (stderr, "_ted_thread: %s: %s\n", SER_TED, strerror (errno));
         exit (1);
     }
 
@@ -416,7 +416,7 @@ static void *_temp_thread (void *arg)
     char *s;
 
     while (1) {
-        s = temp_serialize (w1_therm_get (W1_TEMP_INTERNAL),
+        s = temp_serialize (w1_therm_get (W1_TEMP_CASE),
                             w1_therm_get (W1_TEMP_FRIDGE),
                             w1_therm_get (W1_TEMP_FREEZER));
         _zmq_msg_init_size (&msg, strlen (s));
@@ -454,15 +454,15 @@ static server_t *_server_init (void)
     ctx->zs_other = _zmq_socket (ctx->zctx, ZMQ_PULL);
     _zmq_bind (ctx->zs_other, OTHER_URI);
 
-    ctx->led_a = led_init (LED_A_ADDR);
+    ctx->led_a = led_init (I2C_LED_A);
     led_sleep_set (ctx->led_a, 0);
     led_brightness_set (ctx->led_a, 0x20);
 
-    ctx->led_b = led_init (LED_B_ADDR);
+    ctx->led_b = led_init (I2C_LED_B);
     led_sleep_set (ctx->led_b, 0);
     led_brightness_set (ctx->led_b, 0x20);
 
-    ctx->oled = oled_init (OLED_ADDR);
+    ctx->oled = oled_init (I2C_OLED);
     oled_clear (ctx->oled);
 
     _ted_thread_init (ctx);
@@ -514,7 +514,7 @@ static void read_envoy (server_t *ctx, int dopt)
 /* Message is ready on socket that threads transmit on.
  * If TED, update TED sample data in the server context and recalc wattsec.
  * If key, switch mode
- * If temp, update temp sample data in the server (XXX and...?)
+ * If temp, update temp sample data in the server
  */
 static void read_other (server_t *ctx, int dopt)
 {
