@@ -329,7 +329,7 @@ done:
 /* Wait for momentary, active-low switch to be activated,
  * then send key message on thread socket.
  */
-static void *_key_thread (void *arg)
+static void *key_thread (void *arg)
 {
     thdctx_t *tctx = (thdctx_t *)arg;
     zmq_msg_t msg;
@@ -346,14 +346,14 @@ static void *_key_thread (void *arg)
     return NULL;
 }
 
-static void _key_thread_init (server_t *ctx)
+static void key_thread_init (server_t *ctx)
 {
     int err;
 
     ctx->kctx.zs_other = _zmq_socket (ctx->zctx, ZMQ_PUSH);
     _zmq_connect (ctx->kctx.zs_other, OTHER_URI);
 
-    err = pthread_create (&ctx->kctx.t, NULL, _key_thread, &ctx->kctx);
+    err = pthread_create (&ctx->kctx.t, NULL, key_thread, &ctx->kctx);
     if (err) {
         fprintf (stderr, "pthread_create: %s\n", strerror (err));
         exit (1);
@@ -363,7 +363,7 @@ static void _key_thread_init (server_t *ctx)
 /* Read TED samples from serial port and retransmit them on thread socket
  * as JSON messages.
  */
-static void *_ted_thread (void *arg)
+static void *ted_thread (void *arg)
 {
     thdctx_t *tctx = (thdctx_t *)arg;
     zmq_msg_t msg;
@@ -371,7 +371,7 @@ static void *_ted_thread (void *arg)
     char *s;
 
     if (ted_init (SER_TED) < 0) {
-        fprintf (stderr, "_ted_thread: %s: %s\n", SER_TED, strerror (errno));
+        fprintf (stderr, "ted_thread: %s: %s\n", SER_TED, strerror (errno));
         exit (1);
     }
 
@@ -395,21 +395,21 @@ static void *_ted_thread (void *arg)
     return NULL;
 }
 
-static void _ted_thread_init (server_t *ctx)
+static void ted_thread_init (server_t *ctx)
 {
     int err;
 
     ctx->pctx.zs_other = _zmq_socket (ctx->zctx, ZMQ_PUSH);
     _zmq_connect (ctx->pctx.zs_other, OTHER_URI);
 
-    err = pthread_create (&ctx->pctx.t, NULL, _ted_thread, &ctx->pctx);
+    err = pthread_create (&ctx->pctx.t, NULL, ted_thread, &ctx->pctx);
     if (err) {
         fprintf (stderr, "pthread_create: %s\n", strerror (err));
         exit (1);
     }
 }
 
-static void *_temp_thread (void *arg)
+static void *temp_thread (void *arg)
 {
     thdctx_t *tctx = (thdctx_t *)arg;
     zmq_msg_t msg;
@@ -428,21 +428,21 @@ static void *_temp_thread (void *arg)
     return NULL;
 }
 
-static void _temp_thread_init (server_t *ctx)
+static void temp_thread_init (server_t *ctx)
 {
     int err;
 
     ctx->Tctx.zs_other = _zmq_socket (ctx->zctx, ZMQ_PUSH);
     _zmq_connect (ctx->Tctx.zs_other, OTHER_URI);
 
-    err = pthread_create (&ctx->Tctx.t, NULL, _temp_thread, &ctx->Tctx);
+    err = pthread_create (&ctx->Tctx.t, NULL, temp_thread, &ctx->Tctx);
     if (err) {
         fprintf (stderr, "pthread_create: %s\n", strerror (err));
         exit (1);
     }
 }
 
-static server_t *_server_init (void)
+static server_t *server_init (void)
 {
     server_t *ctx = xzmalloc (sizeof (*ctx));
 
@@ -465,18 +465,15 @@ static server_t *_server_init (void)
     ctx->oled = oled_init (I2C_OLED);
     oled_clear (ctx->oled);
 
-    _ted_thread_init (ctx);
-    _key_thread_init (ctx);
-    _temp_thread_init (ctx);
+    ted_thread_init (ctx);
+    key_thread_init (ctx);
+    temp_thread_init (ctx);
 
     return ctx;
 }
 
-static void _server_fini (server_t *ctx)
+static void server_fini (server_t *ctx)
 {
-    //_ted_thread_fini ();
-    //_shut_thread_fini ();
-
     led_fini (ctx->led_b);
     led_fini (ctx->led_a);
     oled_fini (ctx->oled);
@@ -567,7 +564,7 @@ done:
     _zmq_msg_close (&msg);
 }
 
-static void _update_display (server_t *ctx)
+static void update_display (server_t *ctx)
 {
     time_t now = time (NULL);
     bool tstale = (now - ctx->ted_last > ted_stale);
@@ -620,7 +617,7 @@ static void _update_display (server_t *ctx)
     }
 }
 
-static void _poll (server_t *ctx, int dopt)
+static void mypoll (server_t *ctx, int dopt)
 {
     zmq_pollitem_t zpa[] = {
 { .socket = ctx->zs_envoy,      .events = ZMQ_POLLIN, .revents = 0, .fd = -1 },
@@ -639,7 +636,7 @@ static void _poll (server_t *ctx, int dopt)
         if (zpa[1].revents & ZMQ_POLLIN)
             read_other (ctx, dopt);
     }
-    _update_display (ctx);
+    update_display (ctx);
 }
 
 int main (int argc, char *argv[])
@@ -668,10 +665,10 @@ int main (int argc, char *argv[])
             exit (1);
         }
     }
-    ctx = _server_init ();
+    ctx = server_init ();
     for (;;)
-        _poll (ctx, dopt);
-    _server_fini (ctx);
+        mypoll (ctx, dopt);
+    server_fini (ctx);
     return 0;
 }
 
