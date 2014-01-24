@@ -85,9 +85,13 @@ my %envoy_data = (
 	weekly_energy => int $weekly_energy,
 	lifetime_energy => int $lifetime_energy,
 );
+my %envoy_data_envelope = (
+	envoy_sample => \%envoy_data,
+);
 my $json_obj = new JSON;
-my $json_text = $json_obj->encode(\%envoy_data);
-#printf "envoy.sample %s\n", $json_text;
+my $json_text = $json_obj->encode(\%envoy_data_envelope);
+#printf "envoy_sample %s\n", $json_text;
+#exit;
 
 # Send via 0MQ
 my $ctx = ZeroMQ::Context->new;

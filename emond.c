@@ -45,7 +45,6 @@
 
 #include "oled.h"
 #include "led.h"
-#include "json.h"
 #include "util.h"
 #include "zmq.h"
 #include "ted.h"
@@ -263,6 +262,34 @@ done:
     return ret;
 }
 
+/* envoy is serialized in a perl script */
+
+static bool envoy_deserialize (const char *s, int *lp, int *wp, int *dp, int *cp)
+{
+    json_object *no, *o;
+    int l, w, d, c;
+    bool ret = false;
+
+    if (!(o = json_tokener_parse (s)))
+        goto done;
+    if (!(no = json_object_object_get (o, "envoy_sample")))
+        goto done;
+    if (!get_int (no, "lifetime_energy", &l)
+        || !get_int (no, "weekly_energy", &w)
+        || !get_int (no, "daily_energy", &d)
+        || !get_int (no, "current_power", &c))
+        goto done;
+    ret = true;
+    *lp = l;
+    *wp = w;
+    *dp = d;
+    *cp = c;
+done:
+    if (o)
+        json_object_put (o);
+    return ret;
+}
+
 /* Wait for momentary, active-low halt switch to be activated,
  * then send shutdown_msg on thread socket.
  */
@@ -435,13 +462,13 @@ static void _read_envoy (server_t *ctx, int dopt)
     memcpy (s, zmq_msg_data (&msg), zmq_msg_size (&msg));
     if (dopt)
         fprintf (stderr, "_read_envoy: %s\n", s);
-    (void) envoy_deserialize (s, &ctx->envoy_lifetime_energy,
+    if (envoy_deserialize (s, &ctx->envoy_lifetime_energy,
                                  &ctx->envoy_weekly_energy,
                                  &ctx->envoy_daily_energy,
-                                 &ctx->envoy_current_power);
+                                 &ctx->envoy_current_power))
+        ctx->envoy_last = time (NULL);
     free (s);
     _zmq_msg_close (&msg);
-    ctx->envoy_last = time (NULL);
 }
 
 /* Message is ready on socket that threads transmit on.
@@ -467,14 +494,10 @@ static void _read_thd (server_t *ctx, int dopt)
         goto done;
     }
     if (temp_deserialize (s, &ctx->temp_case, &ctx->temp_fridge,
-                             &ctx->temp_freezer)) {
-        printf ("case=%lf(%lf) fridge=%lf(%lf) freezer=%lf(%lf)\n",
-                ctx->temp_case, c2f (ctx->temp_case),
-                ctx->temp_fridge, c2f (ctx->temp_fridge),
-                ctx->temp_freezer, c2f (ctx->temp_freezer));
-    }
-    else if (ted_deserialize (s, &ctx->ted_addr,  &ctx->ted_count,
-                                 &ctx->ted_watts, &ctx->ted_volts)) {
+                             &ctx->temp_freezer))
+        goto done;
+    if (ted_deserialize (s, &ctx->ted_addr,  &ctx->ted_count,
+                            &ctx->ted_watts, &ctx->ted_volts)) {
         /* N.B. although we notice if envoy or TED values are stale and
          * try to display this, the wattsec value could be innacurate if TED
          * readings are missed or Envoy scrape is not working for some time
@@ -489,6 +512,7 @@ static void _read_thd (server_t *ctx, int dopt)
                           * (ctx->ted_watts + ctx->envoy_current_power);
         }
         ctx->ted_last = now;
+        goto done;
     }
 done:
     free (s);
