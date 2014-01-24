@@ -53,12 +53,6 @@ The TED line shows the most recent raw TED sample.
 
 The LEDs display the instantaneous consumption and production in kW.
 
-To allow the unit to be safely unplugged, a pushbutton was wired to GPIO27.
-When _emond_ detects that this button has been activated, it executes
-```
-    /sbin/shutdown -h now
-```
-
 The following packages, available in the Raspbian wheezy distro,
 are prerequisites for this project:
 ```
@@ -71,3 +65,28 @@ are prerequisites for this project:
     liblwp-protocol-https-perl
 ```
 
+Addendum: fridge temps
+======================
+
+Since the energy monitor sits on top of my fridge, it seemed natrual
+that it should grow some one-wire temperature sensors.
+
+To this end, I soldered a DS2484 1-wire I2C interface chip and one DS1820B
+temperature sensor to a Pi Plate, and mounted an RJ11 connector out the back
+of the energy monitor.  Potted DS1820B sensors (ebay) were mounted in the
+freezer and refridgerator compartments.  Pi GPIO4 was connected to the SLPZ
+line on the DS2484.
+
+The following runes are needed in /etc/rc.local:
+```
+    echo "4"    >/sys/class/gpio/export
+    echo "out"  >/sys/class/gpio/gpio4/direction
+    echo "1"    >/sys/class/gpio/gpio4/value
+    modprobe ds2482
+    modprobe w1_therm strong_pullup=0
+    echo ds2482 0x18 >/sys/bus/i2c/devices/i2c-1/new_device
+```
+
+The emond.c now monitors these sensors as well, and switches the display
+mode between energy monitor and fridge monitor when a switch on the front
+panel is depressed.
