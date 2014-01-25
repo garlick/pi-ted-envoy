@@ -28,6 +28,8 @@
  * Listen for JSON from TED, temp, and key threads on zs_other 0MQ socket.
  */
 
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -265,11 +267,13 @@ static server_t *server_init (void)
 
     ctx->mode = MODE_POWER;
 
+    umask (777);
+
     ctx->zctx = _zmq_init (1);
     ctx->zs_envoy = _zmq_socket (ctx->zctx, ZMQ_PULL);
     _zmq_bind (ctx->zs_envoy, ENVOY_URI);
     ctx->zs_pub = _zmq_socket (ctx->zctx, ZMQ_PUB);
-    _zmq_bind (ctx->zs_envoy, ENVOY_URI);
+    _zmq_bind (ctx->zs_pub, PUB_URI);
     ctx->zs_other = _zmq_socket (ctx->zctx, ZMQ_PULL);
     _zmq_bind (ctx->zs_other, OTHER_URI);
 

@@ -3,12 +3,16 @@ BINDIR=/usr/local/bin
 CFLAGS=-Wall -Werror -O -g
 LDFLAGS=-ljson -lzmq
 
-OBJS = emond.o ted.o oled.o util.o zmq.o led.o gpio.o w1.o encode.o
+SRV_OBJS = emond.o ted.o oled.o util.o zmq.o led.o gpio.o w1.o encode.o
+CLI_OBJS = emon.o util.o zmq.o encode.o
 
-all: emond ztled w1util tedutil
+all: emond emon ztled w1util tedutil
 
-emond: $(OBJS)
-	$(CC) -o $@ $(OBJS) $(LDFLAGS)
+emond: $(SRV_OBJS) 
+	$(CC) -o $@ $(SRV_OBJS) $(LDFLAGS)
+
+emon: $(CLI_OBJS)
+	$(CC) -o $@ $(CLI_OBJS) $(LDFLAGS)
 
 ztled: ztled.o led.o gpio.o
 	$(CC) -o $@ ztled.o led.o gpio.o
@@ -24,5 +28,6 @@ clean:
 
 install:
 	sudo install -c emond $(BINDIR)
+	sudo install -c emon $(BINDIR)
 	sudo install -c enphase-scrape.pl $(BINDIR)
 	sudo crontab <crontab
