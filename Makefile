@@ -4,7 +4,7 @@ CFLAGS=-Wall -Werror -O -g
 LDFLAGS=-ljson -lzmq
 
 SRV_OBJS = emond.o ted.o oled.o util.o zmq.o led.o gpio.o w1.o encode.o
-CLI_OBJS = emon.o util.o zmq.o encode.o
+CLI_OBJS = emon.o util.o zmq.o encode.o w1.o
 
 all: emond emon ztled w1util tedutil
 
