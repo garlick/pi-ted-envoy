@@ -11,7 +11,7 @@
 #include "encode.h"
 #include "w1.h"
 
-#define OPTIONS "tmeEa"
+#define OPTIONS "tmeEac"
 #define HAVE_GETOPT_LONG 1
 
 #if HAVE_GETOPT_LONG
@@ -22,13 +22,14 @@ static const struct option longopts[] = {
     { "ted-energy",   no_argument, 0, 'e'},
     { "envoy-energy", no_argument, 0, 'E'},
     { "monitor",      no_argument, 0, 'm'},
+    { "csv",          no_argument, 0, 'c'},
     {0, 0, 0, 0},
 };
 #else
 #define GETOPT(ac,av,opt,lopt) getopt (ac,av,opt)
 #endif
 
-void mon (void *zs, bool topt, bool eopt, bool Eopt, bool mopt);
+void mon (void *zs, bool topt, bool eopt, bool Eopt, bool mopt, bool copt);
 
 void usage (void)
 {
@@ -38,6 +39,7 @@ void usage (void)
 "   -e,--ted-energy         display TED energy values\n"
 "   -E,--envoy-energy       display Envoy energy values\n"
 "   -m,--monitor            monitor raw JSON as it is sampled\n"
+"   -c,--csv                output csv data\n"
 );
     exit (1);
 }
@@ -51,6 +53,7 @@ int main (int argc, char *argv[])
     bool mopt = false;
     bool eopt = false;
     bool Eopt = false;
+    bool copt = false;
 
     while ((c = GETOPT (argc, argv, OPTIONS, longopts)) != -1) {
         switch (c) {
@@ -65,6 +68,9 @@ int main (int argc, char *argv[])
                 break;
             case 'm': /* --monitor */
                 mopt = true;
+                break;
+            case 'c': /* --csv */
+                copt = true;
                 break;
             case 'a': /* --all */
                 Eopt = eopt = topt = true;
@@ -83,7 +89,7 @@ int main (int argc, char *argv[])
     _zmq_connect (zs, PUB_URI);
     _zmq_subscribe (zs, "");
 
-    mon (zs, topt, eopt, Eopt, mopt);
+    mon (zs, topt, eopt, Eopt, mopt, copt);
 
     _zmq_close (zs);
     _zmq_term (zctx);
@@ -91,7 +97,7 @@ int main (int argc, char *argv[])
     exit (0);
 }
 
-void mon (void *zs, bool topt, bool eopt, bool Eopt, bool mopt)
+void mon (void *zs, bool topt, bool eopt, bool Eopt, bool mopt, bool copt)
 {
     int tcount = 0;
     int ecount = 0;
@@ -112,27 +118,40 @@ void mon (void *zs, bool topt, bool eopt, bool Eopt, bool mopt)
             if (topt && tcount == 0) {
                 double c, fr, fz;
                 if (temp_deserialize (s, &c, &fr, &fz)) {
-                    printf ("Fridge top case temp   %.1lf F\n", c2f (c));
-                    printf ("Fridge temp            %.1lf F\n", c2f (fr));
-                    printf ("Freezer temp           %.1lf F\n", c2f (fz));
+                    if (copt) {
+                        printf ("%.1lf,%.1lf,%.1lf\n",
+                                c2f (c), c2f (fr), c2f (fz));
+                    } else {
+                        printf ("Fridge top case temp   %.1lf F\n", c2f (c));
+                        printf ("Fridge temp            %.1lf F\n", c2f (fr));
+                        printf ("Freezer temp           %.1lf F\n", c2f (fz));
+                    }
                     tcount++;
                 }
             }
             if (eopt && ecount == 0) {
                 int a, c, w, v;
                 if (ted_deserialize (s, &a, &c, &w, &v)) {
-                    printf ("Net power from grid    %d W\n", w);
-                    printf ("Line voltage           %d V\n", v);
+                    if (copt) {
+                        printf ("%d,%d,%d,%d\n", a, c, w, v);
+                    } else {
+                        printf ("Net power from grid    %d W\n", w);
+                        printf ("Line voltage           %d V\n", v);
+                    }
                     ecount++;
                 }
             }
             if (Eopt && Ecount == 0) {
                 int l, w, d, c;
                 if (envoy_deserialize (s, &l, &w, &d, &c)) {
-                    printf ("Lifetime energy gen    %.1lf kW*h\n", 1E-3*l);
-                    printf ("Weekly energy gen      %.1lf kW*h\n", 1E-3*w);
-                    printf ("Daily energy gen       %.1lf kW*h\n", 1E-3*d);
-                    printf ("Generated power        %d W\n", c);
+                    if (copt) {
+                        printf ("%d,%d,%d,%d\n", l, w, d, c);
+                    } else {
+                        printf ("Lifetime energy gen    %.1lf kW*h\n", 1E-3*l);
+                        printf ("Weekly energy gen      %.1lf kW*h\n", 1E-3*w);
+                        printf ("Daily energy gen       %.1lf kW*h\n", 1E-3*d);
+                        printf ("Generated power        %d W\n", c);
+                    }
                     Ecount++;
                 } 
             }
@@ -140,8 +159,8 @@ void mon (void *zs, bool topt, bool eopt, bool Eopt, bool mopt)
         free (s);
         _zmq_msg_close (&msg); 
 
-        if (!mopt && (!topt || tcount > 0) && (!eopt || ecount > 0)
-                                           && (!Eopt || Ecount > 0))
+        if (!copt && !mopt && (!topt || tcount > 0) && (!eopt || ecount > 0)
+                                                    && (!Eopt || Ecount > 0))
             break;
     }
 }
