@@ -401,23 +401,29 @@ static void update_display (server_t *ctx)
     bool estale = (now - ctx->envoy_last > envoy_stale);
 
     oled_clear (ctx->oled);
-
+    /* 5 lines: 0-4 */
     oled_text_pos_set (ctx->oled, 0, 0);
-    oled_printf (ctx->oled, "DAILY ENERGY");
+    oled_printf (ctx->oled, "Frz %+05.1f F", c2f (ctx->temp_freezer));
 
     oled_text_pos_set (ctx->oled, 0, 1);
+    oled_printf (ctx->oled, "Ref %+05.1f F", c2f (ctx->temp_fridge));
+
+    oled_text_pos_set (ctx->oled, 0, 2);
+    oled_printf (ctx->oled, "DAILY ENERGY");
+
+    oled_text_pos_set (ctx->oled, 0, 3);
     oled_printf (ctx->oled, "gen %-2.3f kWh%s",
                  (float)ctx->envoy_daily_energy / 1000.0, estale ? "*" : " ");
 
-    oled_text_pos_set (ctx->oled, 0, 2);
+    oled_text_pos_set (ctx->oled, 0, 4);
     oled_printf (ctx->oled, "use %-2.3f kWh%s",
                  (float)ctx->wattsec / (1000*60*60),
                  (tstale || estale) ? "*" : " ");
-
+#if 0
     oled_text_pos_set (ctx->oled, 0, 4);
     oled_printf (ctx->oled, "TED %dW %dV%s", ctx->ted_watts, ctx->ted_volts,
                  tstale ? "*" : " ");
-
+#endif
     if (ctx->mode == MODE_POWER) {
         /* LED A: gen */
         if (estale)
